@@ -62,7 +62,7 @@ def executar_benchmark(verbose: bool = True) -> dict:
             tokens = {}
             erro = True
 
-        correto = calcular_acuracia(resposta, item["resposta_referencia"])
+        correto = calcular_acuracia(resposta, item.get("resposta_referencia") or item.get("resposta_esperada", ""))
         custo = calcular_custo_usd(
             tokens.get("input", 0),
             tokens.get("output", 0),
@@ -70,9 +70,9 @@ def executar_benchmark(verbose: bool = True) -> dict:
 
         resultado_item = {
             "id": item["id"],
-            "tipo": item["tipo"],
+            "tipo": item.get("tipo") or item.get("tipo_resposta", ""),
             "pergunta": item["pergunta"],
-            "resposta_referencia": item["resposta_referencia"],
+            "resposta_referencia": item.get("resposta_referencia") or item.get("resposta_esperada"),
             "resposta_agente": resposta,
             "correto": correto,
             "erro": erro,
@@ -84,7 +84,7 @@ def executar_benchmark(verbose: bool = True) -> dict:
         resultados.append(resultado_item)
 
         if verbose:
-            status = "✓" if correto else "✗"
+            status = "[OK]" if correto else "[X]"
             print(f"  {status} | {latencia}s | {tool_calls} tools | ${custo}")
 
         # Pausa pequena para não sobrecarregar a API

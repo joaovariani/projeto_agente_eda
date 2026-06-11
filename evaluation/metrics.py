@@ -10,6 +10,8 @@ def calcular_acuracia(resposta_agente: str, resposta_referencia: str) -> bool:
     Verifica se a resposta do agente contém a informação de referência.
     Para perguntas ambíguas, verifica se o agente recusou ou pediu esclarecimento.
     """
+    if not resposta_referencia:
+        return False
     if resposta_referencia.startswith("AMBIGUA") or resposta_referencia.startswith("INVALIDA"):
         # O agente deve ter reconhecido o problema
         palavras_chave = [
@@ -82,7 +84,7 @@ def gerar_relatorio(resultados: list[dict]) -> dict:
 
     # Por tipo de pergunta
     por_tipo = {}
-    for tipo in ["simples", "analitica", "ambigua"]:
+    for tipo in ["factual", "analitica", "ambigua"]:
         subset = [r for r in resultados if r.get("tipo") == tipo]
         if subset:
             corretas_tipo = sum(1 for r in subset if r.get("correto", False))
