@@ -1,6 +1,3 @@
-"""
-Pacote de avaliação do agente.
-"""
+from .benchmark import executar_benchmark
 
-from .metrics import avaliar_resposta, BenchmarkSummary
-from .benchmark import rodar_benchmark, carregar_benchmark
+__all__ = ["executar_benchmark"]

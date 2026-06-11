@@ -1,187 +1,108 @@
 """
-Métricas de avaliação.
-
-Comparar a resposta de um LLM em texto livre com um gabarito é um problema
-não-trivial. Este módulo oferece uma abordagem PRAGMÁTICA por tipo de resposta:
-
-  - numero_inteiro / numero_float: extrai o primeiro número da resposta e compara
-                                   com tolerância numérica.
-  - lista_strings:                 verifica se todos os itens esperados aparecem
-                                   na resposta (case-insensitive, ignora ordem).
-  - dict_numerico:                 verifica se todas as chaves esperadas aparecem
-                                   na resposta com valores aproximadamente iguais.
-  - categorica:                    verifica se a resposta contém alguma palavra-chave.
-
-TODO (alunos):
-  - O comparador atual é SIMPLES por design. Discutam no relatório suas
-    limitações: e se a resposta certa estiver expressa de forma diferente?
-    Considerem usar LLM-as-judge como melhoria.
+Cálculo de métricas de avaliação do agente.
 """
 
-from __future__ import annotations
 import re
-import json
-from dataclasses import dataclass
-from datetime import datetime
-from pathlib import Path
-
-from config import NUMERIC_TOLERANCE, BENCHMARK_FILE, LOGS_DIR
 
 
-# ============================================================
-# Extração de valores a partir de texto livre
-# ============================================================
-
-def extrair_primeiro_numero(texto: str) -> float | None:
+def calcular_acuracia(resposta_agente: str, resposta_referencia: str) -> bool:
     """
-    Tenta extrair o primeiro número que aparece no texto da resposta.
-
-    Aceita formatos: 1234, 1.234, 1,234.56, 1.234,56, -3.14, 50%, etc.
+    Verifica se a resposta do agente contém a informação de referência.
+    Para perguntas ambíguas, verifica se o agente recusou ou pediu esclarecimento.
     """
-    if not texto:
-        return None
+    if resposta_referencia.startswith("AMBIGUA") or resposta_referencia.startswith("INVALIDA"):
+        # O agente deve ter reconhecido o problema
+        palavras_chave = [
+            "não existe", "nao existe", "não encontrei", "nao encontrei",
+            "subjetivo", "não é possível", "nao e possivel", "ambíguo",
+            "ambiguo", "esclarecimento", "não tenho", "nao tenho",
+            "coluna", "disponível", "disponivel", "sugerir", "poderia"
+        ]
+        resposta_lower = resposta_agente.lower()
+        return any(p in resposta_lower for p in palavras_chave)
 
-    # Remove % e $ que podem grudar nos números
-    texto_limpo = texto.replace("%", "").replace("$", "").replace("R$", "")
+    # Extrai números da resposta de referência
+    numeros_ref = re.findall(r"-?\d+\.?\d*", resposta_referencia)
 
-    # Procura por padrões numéricos: opcional sinal, dígitos, separador, dígitos
-    # Casa "1.234,56", "1234.56", "1234", etc.
-    padroes = [
-        r"-?\d{1,3}(?:[.,]\d{3})+(?:[.,]\d+)?",  # 1.234,56 ou 1,234.56
-        r"-?\d+[.,]\d+",                          # 12,34 ou 12.34
-        r"-?\d+",                                 # 1234
-    ]
-
-    for padrao in padroes:
-        match = re.search(padrao, texto_limpo)
-        if match:
-            valor_str = match.group()
-            # Normaliza: remove separador de milhar, converte vírgula em ponto
-            if valor_str.count(",") > 0 and valor_str.count(".") > 0:
-                # Tem ambos: o último é o decimal
-                if valor_str.rfind(",") > valor_str.rfind("."):
-                    valor_str = valor_str.replace(".", "").replace(",", ".")
-                else:
-                    valor_str = valor_str.replace(",", "")
-            elif valor_str.count(",") == 1 and not valor_str[-1].isdigit() is False:
-                # Vírgula sozinha: tratar como decimal
-                valor_str = valor_str.replace(",", ".")
-            try:
-                return float(valor_str)
-            except ValueError:
-                continue
-    return None
-
-
-# ============================================================
-# Comparadores por tipo
-# ============================================================
-
-def comparar_numero(resposta: str, esperado: float) -> bool:
-    valor = extrair_primeiro_numero(resposta)
-    if valor is None:
-        return False
-    return abs(valor - esperado) <= NUMERIC_TOLERANCE
-
-
-def comparar_lista_strings(resposta: str, esperado: list[str]) -> bool:
-    resposta_lower = resposta.lower()
-    return all(item.lower() in resposta_lower for item in esperado)
-
-
-def comparar_dict_numerico(resposta: str, esperado: dict) -> bool:
-    """
-    Verifica se cada par chave-valor do dicionário esperado aparece na resposta.
-    Não exige ordem nem formato específico.
-    """
-    resposta_lower = resposta.lower()
-    for chave, valor in esperado.items():
-        if str(chave).lower() not in resposta_lower:
-            return False
-        # Procura o valor numérico próximo dessa chave
-        # Heurística: pega um trecho ao redor da chave e procura número
-        idx = resposta_lower.find(str(chave).lower())
-        trecho = resposta[max(0, idx - 5): idx + 80]
-        num = extrair_primeiro_numero(trecho)
-        if num is None or abs(num - float(valor)) > NUMERIC_TOLERANCE * max(1.0, abs(valor)):
-            return False
-    return True
-
-
-PALAVRAS_RECUSA = {
-    "ambígua", "ambigua", "não entendi", "nao entendi",
-    "esclarecer", "esclareça", "esclareca",
-    "não consigo", "nao consigo",
-    "não posso", "nao posso",
-    "inválida", "invalida",
-    "não está clara", "nao esta clara",
-}
-
-
-def comparar_categorica(resposta: str, esperado: str) -> bool:
-    resposta_lower = resposta.lower()
-    if esperado == "recusa":
-        return any(palavra in resposta_lower for palavra in PALAVRAS_RECUSA)
-    return esperado.lower() in resposta_lower
-
-
-# ============================================================
-# Comparador unificado
-# ============================================================
-
-def avaliar_resposta(resposta: str, esperado, tipo_resposta: str) -> bool:
-    """
-    Despacha para o comparador certo conforme o tipo da resposta esperada.
-    Retorna True se a resposta é considerada correta.
-    """
-    if esperado is None:
-        # Gabarito não foi preenchido — não dá para avaliar
+    if numeros_ref:
+        # Verifica se algum número da referência aparece na resposta
+        for num in numeros_ref:
+            if num in resposta_agente:
+                return True
         return False
 
-    if tipo_resposta in ("numero_inteiro", "numero_float"):
-        return comparar_numero(resposta, float(esperado))
-    elif tipo_resposta == "lista_strings":
-        return comparar_lista_strings(resposta, esperado)
-    elif tipo_resposta == "dict_numerico":
-        return comparar_dict_numerico(resposta, esperado)
-    elif tipo_resposta == "categorica":
-        return comparar_categorica(resposta, esperado)
-    else:
-        raise ValueError(f"Tipo de resposta desconhecido: {tipo_resposta}")
+    # Para respostas textuais, verifica se palavras-chave aparecem
+    palavras = [p.lower().strip() for p in resposta_referencia.split() if len(p) > 3]
+    resposta_lower = resposta_agente.lower()
+    matches = sum(1 for p in palavras if p in resposta_lower)
+    return matches >= max(1, len(palavras) // 2)
 
 
-# ============================================================
-# Agregação de métricas
-# ============================================================
+def calcular_custo_usd(tokens_input: int, tokens_output: int) -> float:
+    """
+    Estima o custo em USD para Claude Haiku.
+    Preços: $0.80/MTok input, $4.00/MTok output (junho 2026)
+    """
+    custo_input = (tokens_input / 1_000_000) * 0.80
+    custo_output = (tokens_output / 1_000_000) * 4.00
+    return round(custo_input + custo_output, 6)
 
-@dataclass
-class BenchmarkSummary:
-    """Resumo agregado da execução do benchmark."""
-    total_perguntas: int
-    acertos: int
-    taxa_execucao_sucesso: float       # % de perguntas que terminaram sem crash
-    acuracia_geral: float              # % de respostas corretas
-    acuracia_por_tipo: dict[str, float]
-    tool_calls_media: float
-    latencia_media: float
-    input_tokens_total: int
-    output_tokens_total: int
 
-    def imprimir(self):
-        print("\n" + "=" * 60)
-        print("RESUMO DO BENCHMARK")
-        print("=" * 60)
-        print(f"Total de perguntas:           {self.total_perguntas}")
-        print(f"Acertos:                      {self.acertos}")
-        print(f"Acurácia geral:               {self.acuracia_geral:.1%}")
-        print(f"Taxa de execução bem-sucedida: {self.taxa_execucao_sucesso:.1%}")
-        print()
-        print("Acurácia por tipo de pergunta:")
-        for tipo, acc in self.acuracia_por_tipo.items():
-            print(f"  - {tipo:15s}: {acc:.1%}")
-        print()
-        print(f"Tool calls médias por pergunta: {self.tool_calls_media:.2f}")
-        print(f"Latência média por pergunta:    {self.latencia_media:.2f}s")
-        print(f"Tokens de entrada (total):      {self.input_tokens_total}")
-        print(f"Tokens de saída (total):        {self.output_tokens_total}")
-        print("=" * 60)
+def gerar_relatorio(resultados: list[dict]) -> dict:
+    """
+    Gera o relatório completo de métricas a partir dos resultados do benchmark.
+    """
+    total = len(resultados)
+    if total == 0:
+        return {"erro": "Nenhum resultado para calcular métricas."}
+
+    # Acurácia
+    corretas = sum(1 for r in resultados if r.get("correto", False))
+    acuracia = round(corretas / total * 100, 2)
+
+    # Taxa de execução bem-sucedida
+    sucessos = sum(1 for r in resultados if not r.get("erro", False))
+    taxa_execucao = round(sucessos / total * 100, 2)
+
+    # Média de tool calls
+    tool_calls = [r.get("tool_calls", 0) for r in resultados]
+    media_tool_calls = round(sum(tool_calls) / total, 2)
+
+    # Latência média
+    latencias = [r.get("latencia_segundos", 0) for r in resultados]
+    latencia_media = round(sum(latencias) / total, 2)
+
+    # Custo total e médio
+    custo_total = sum(r.get("custo_usd", 0) for r in resultados)
+    custo_medio = round(custo_total / total, 6)
+
+    # Tokens totais
+    tokens_input = sum(r.get("tokens", {}).get("input", 0) for r in resultados)
+    tokens_output = sum(r.get("tokens", {}).get("output", 0) for r in resultados)
+
+    # Por tipo de pergunta
+    por_tipo = {}
+    for tipo in ["simples", "analitica", "ambigua"]:
+        subset = [r for r in resultados if r.get("tipo") == tipo]
+        if subset:
+            corretas_tipo = sum(1 for r in subset if r.get("correto", False))
+            por_tipo[tipo] = {
+                "total": len(subset),
+                "corretas": corretas_tipo,
+                "acuracia": round(corretas_tipo / len(subset) * 100, 2),
+            }
+
+    return {
+        "total_perguntas": total,
+        "acuracia_geral": acuracia,
+        "taxa_execucao_sucesso": taxa_execucao,
+        "media_tool_calls": media_tool_calls,
+        "latencia_media_segundos": latencia_media,
+        "custo_total_usd": round(custo_total, 4),
+        "custo_medio_por_pergunta_usd": custo_medio,
+        "tokens_totais": {
+            "input": tokens_input,
+            "output": tokens_output,
+        },
+        "acuracia_por_tipo": por_tipo,
+    }

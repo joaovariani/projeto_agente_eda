@@ -1,125 +1,104 @@
 """
-Ferramenta de visualização: gera gráficos e salva como imagem.
-
-Decisão de design: as imagens são salvas em disco e a tool retorna
-APENAS o caminho do arquivo gerado. Não tentamos passar imagem ao LLM
-porque isso aumenta muito o custo de tokens e não é necessário —
-basta o agente avisar ao usuário onde está o gráfico.
+Ferramentas de visualização: geração de gráficos salvos como imagem.
 """
 
-from datetime import datetime
-from pathlib import Path
 import matplotlib
-# Backend não-interativo: importante quando rodando via CLI/CI.
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
+import seaborn as sns
+from datetime import datetime
 from .base import tool, state
 from config import OUTPUTS_DIR
 
 
-TIPOS_VALIDOS = {"hist", "histograma", "boxplot", "scatter", "barplot", "linha"}
-
-
-def _gerar_nome_arquivo(tipo: str) -> Path:
-    """Gera um nome de arquivo único baseado em timestamp."""
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return OUTPUTS_DIR / f"plot_{tipo}_{ts}.png"
-
+# ========================================================
+# gerar_grafico
+# ========================================================
 
 @tool(
     description=(
-        "Gera um gráfico a partir do dataset e salva como PNG.\n\n"
-        "Tipos disponíveis:\n"
-        "  - 'hist' / 'histograma': histograma de UMA coluna numérica\n"
-        "  - 'boxplot': boxplot de UMA coluna (opcionalmente por categoria)\n"
-        "  - 'scatter': dispersão entre DUAS colunas numéricas\n"
-        "  - 'barplot': barras com contagem de UMA coluna categórica\n"
-        "  - 'linha': gráfico de linha entre DUAS colunas (ex.: tempo × valor)\n\n"
-        "Retorna o caminho do arquivo PNG gerado."
+        "Gera e salva um gráfico como imagem na pasta outputs/. "
+        "Tipos disponíveis: histograma, boxplot, scatter, barplot. "
+        "Retorna o caminho do arquivo salvo."
     ),
     parameters={
         "type": "object",
         "properties": {
             "tipo": {
                 "type": "string",
-                "enum": list(TIPOS_VALIDOS),
+                "description": "Tipo do gráfico: histograma, boxplot, scatter, barplot.",
             },
             "colunas": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Colunas envolvidas. Quantidade depende do tipo.",
+                "description": (
+                    "Lista de colunas a usar. "
+                    "histograma/boxplot: 1 coluna. "
+                    "scatter: 2 colunas [x, y]. "
+                    "barplot: 2 colunas [categoria, valor]."
+                ),
             },
             "titulo": {
                 "type": "string",
-                "description": "Título do gráfico (opcional).",
+                "description": "Título opcional do gráfico.",
             },
         },
         "required": ["tipo", "colunas"],
     },
 )
-def gerar_grafico(tipo: str, colunas: list[str], titulo: str = "") -> dict:
-    """Gera gráfico e retorna caminho do arquivo."""
+def gerar_grafico(tipo: str, colunas: list, titulo: str = "") -> dict:
     df = state.require_loaded()
 
-    # Valida tipo
-    if tipo not in TIPOS_VALIDOS:
-        return {"erro": f"Tipo '{tipo}' inválido. Use um de {TIPOS_VALIDOS}."}
+    tipos_validos = ["histograma", "boxplot", "scatter", "barplot"]
+    if tipo not in tipos_validos:
+        return {"erro": f"Tipo '{tipo}' inválido. Use: {tipos_validos}"}
 
-    # Valida colunas
     for col in colunas:
         if col not in df.columns:
-            return {"erro": f"Coluna '{col}' não existe."}
+            return {"erro": f"Coluna '{col}' não existe. Use listar_colunas() para ver as disponíveis."}
 
-    # Cria figura
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.set_theme(style="whitegrid")
 
     try:
-        if tipo in {"hist", "histograma"}:
-            if len(colunas) != 1:
-                return {"erro": "Histograma requer exatamente 1 coluna."}
-            df[colunas[0]].plot(kind="hist", bins=30, ax=ax, edgecolor="black")
+        if tipo == "histograma":
+            sns.histplot(data=df, x=colunas[0], kde=True, ax=ax)
             ax.set_xlabel(colunas[0])
-            ax.set_ylabel("Frequência")
 
         elif tipo == "boxplot":
-            if len(colunas) == 1:
-                df[colunas[0]].plot(kind="box", ax=ax)
-            elif len(colunas) == 2:
-                # 1 categórica + 1 numérica
-                df.boxplot(column=colunas[1], by=colunas[0], ax=ax)
-            else:
-                return {"erro": "Boxplot aceita 1 coluna (uma série) ou 2 (categoria × numérica)."}
+            sns.boxplot(data=df, y=colunas[0], ax=ax)
 
         elif tipo == "scatter":
-            if len(colunas) != 2:
-                return {"erro": "Scatter requer exatamente 2 colunas."}
-            df.plot.scatter(x=colunas[0], y=colunas[1], ax=ax, alpha=0.5)
+            if len(colunas) < 2:
+                return {"erro": "scatter requer 2 colunas: [x, y]."}
+            sns.scatterplot(data=df, x=colunas[0], y=colunas[1], alpha=0.3, ax=ax)
 
         elif tipo == "barplot":
-            if len(colunas) != 1:
-                return {"erro": "Barplot requer exatamente 1 coluna."}
-            df[colunas[0]].value_counts().head(20).plot(kind="bar", ax=ax)
-            ax.set_xlabel(colunas[0])
-            ax.set_ylabel("Contagem")
+            if len(colunas) < 2:
+                return {"erro": "barplot requer 2 colunas: [categoria, valor]."}
+            dados = (
+                df.groupby(colunas[0])[colunas[1]]
+                .mean()
+                .sort_values(ascending=False)
+                .head(15)
+                .reset_index()
+            )
+            sns.barplot(data=dados, x=colunas[1], y=colunas[0], ax=ax)
 
-        elif tipo == "linha":
-            if len(colunas) != 2:
-                return {"erro": "Linha requer 2 colunas (x e y)."}
-            df.plot(x=colunas[0], y=colunas[1], ax=ax, kind="line")
+        ax.set_title(titulo or f"{tipo} — {', '.join(colunas)}")
+        plt.tight_layout()
 
-        ax.set_title(titulo or f"{tipo}: {', '.join(colunas)}")
-        fig.tight_layout()
-
-        caminho = _gerar_nome_arquivo(tipo)
-        fig.savefig(caminho, dpi=120)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        nome_arquivo = f"{tipo}_{'_'.join(colunas)}_{timestamp}.png"
+        caminho = OUTPUTS_DIR / nome_arquivo
+        fig.savefig(caminho, dpi=100)
         plt.close(fig)
 
         return {
+            "arquivo": str(caminho),
             "tipo": tipo,
             "colunas": colunas,
-            "arquivo_gerado": str(caminho),
-            "mensagem": f"Gráfico salvo em {caminho.name}",
+            "mensagem": f"Gráfico salvo em {caminho}",
         }
 
     except Exception as e:

@@ -1,135 +1,140 @@
 """
-Testes unitários das tools.
+Testes unitários das ferramentas do agente.
 
-Estes testes não dependem do LLM — testam APENAS a lógica em pandas.
-Rodar com:
-    pytest tests/
-
-TODO (alunos):
-  - Adicionar testes para as tools que vocês criarem.
-  - Adicionar testes de casos de erro (coluna inexistente, etc).
+Uso:
+    python -m pytest tests/
 """
 
-import pandas as pd
 import pytest
+import pandas as pd
+from tools.base import state
+from tools import inspect_tools, filter_tools, stats_tools
 
-from tools import state
-from tools.inspect_tools import listar_colunas, descrever_dados, contar_valores
-from tools.filter_tools import filtrar, agrupar_e_agregar
-from tools.stats_tools import correlacao, detectar_outliers
-
-
-# ============================================================
-# Fixture: dataset sintético usado por todos os testes
-# ============================================================
 
 @pytest.fixture(autouse=True)
-def carregar_dataset_sintetico():
-    """Carrega um DataFrame sintético antes de cada teste."""
-    df = pd.DataFrame({
-        "idade": [25, 30, 35, 40, 45, 50, 100],   # 100 é outlier
-        "salario": [3000, 4500, 6000, 7500, 9000, 11000, 12500],
-        "genero": ["F", "M", "F", "M", "F", "M", "F"],
-        "cidade": ["SP", "RJ", "SP", "MG", "RJ", "SP", "BA"],
-    })
-    state.df = df
-    state.path = "<fixture>"
-    yield
-    state.df = None
+def carregar_dataset():
+    """Carrega o dataset antes de cada teste."""
+    state.load("data/spotify.csv")
 
 
-# ============================================================
-# Testes de inspect_tools
-# ============================================================
+# ========================================================
+# Testes: inspect_tools
+# ========================================================
 
-def test_listar_colunas_retorna_todas():
-    resultado = listar_colunas()
+def test_listar_colunas():
+    resultado = inspect_tools.listar_colunas()
+    assert "colunas" in resultado
+    assert resultado["total_linhas"] == 114000
+    assert resultado["total_colunas"] == 21
     nomes = [c["nome"] for c in resultado["colunas"]]
-    assert nomes == ["idade", "salario", "genero", "cidade"]
-    assert resultado["total_linhas"] == 7
-    assert resultado["total_colunas"] == 4
+    assert "track_name" in nomes
+    assert "popularity" in nomes
+    assert "track_genre" in nomes
 
 
-def test_descrever_dados_separa_numericas_de_categoricas():
-    resultado = descrever_dados()
+def test_descrever_dados():
+    resultado = inspect_tools.descrever_dados()
     assert "numericas" in resultado
     assert "categoricas" in resultado
-    assert "idade" in resultado["numericas"]
-    assert "genero" in resultado["categoricas"]
+    assert "popularity" in resultado["numericas"]
+    assert "track_genre" in resultado["categoricas"]
 
 
-def test_descrever_dados_coluna_invalida_retorna_erro():
-    resultado = descrever_dados(colunas=["nao_existe"])
-    assert "erro" in resultado
-
-
-def test_contar_valores_basico():
-    resultado = contar_valores("genero")
-    assert resultado["coluna"] == "genero"
-    assert resultado["total_valores_unicos"] == 2
-    assert resultado["distribuicao"]["F"] == 4
-    assert resultado["distribuicao"]["M"] == 3
+def test_contar_valores_valido():
+    resultado = inspect_tools.contar_valores("track_genre")
+    assert "distribuicao" in resultado
+    assert resultado["total_unicos"] == 114
+    assert len(resultado["distribuicao"]) > 0
 
 
 def test_contar_valores_coluna_invalida():
-    resultado = contar_valores("inexistente")
+    resultado = inspect_tools.contar_valores("coluna_inexistente")
     assert "erro" in resultado
 
 
-# ============================================================
-# Testes de filter_tools
-# ============================================================
-
-def test_filtrar_basico():
-    resultado = filtrar("idade > 35")
-    assert resultado["linhas_resultantes"] == 4  # 40, 45, 50, 100
+def test_buscar_registros_valido():
+    resultado = inspect_tools.buscar_registros("popularity == 100")
+    assert "registros" in resultado
+    assert resultado["total_encontrados"] > 0
+    assert "track_name" in resultado["registros"][0]
 
 
-def test_filtrar_expressao_invalida():
-    resultado = filtrar("coluna_inexistente > 0")
+def test_buscar_registros_sem_resultado():
+    resultado = inspect_tools.buscar_registros("popularity > 200")
+    assert "aviso" in resultado
+
+
+# ========================================================
+# Testes: filter_tools
+# ========================================================
+
+def test_filtrar_valido():
+    resultado = filter_tools.filtrar("popularity > 90")
+    assert "total_registros" in resultado
+    assert resultado["total_registros"] > 0
+    assert "percentual_do_total" in resultado
+
+
+def test_filtrar_condicao_invalida():
+    resultado = filter_tools.filtrar("coluna_xyz > 10")
     assert "erro" in resultado
 
 
-def test_agrupar_e_agregar_media_por_genero():
-    resultado = agrupar_e_agregar(grupo="genero", coluna="salario", funcao="mean")
-    assert "F" in resultado["resultados"]
-    assert "M" in resultado["resultados"]
-    # F: (3000+6000+9000+12500)/4 = 7625
-    assert resultado["resultados"]["F"] == pytest.approx(7625.0, abs=0.1)
+def test_filtrar_sem_resultado():
+    resultado = filter_tools.filtrar("popularity > 200")
+    assert "aviso" in resultado
+
+
+def test_agrupar_e_agregar_valido():
+    resultado = filter_tools.agrupar_e_agregar("track_genre", "popularity", "mean")
+    assert "resultado" in resultado
+    assert len(resultado["resultado"]) > 0
+    assert resultado["resultado"][0]["grupo"] == "pop-film"
 
 
 def test_agrupar_e_agregar_funcao_invalida():
-    resultado = agrupar_e_agregar(grupo="genero", coluna="salario", funcao="xyz")
+    resultado = filter_tools.agrupar_e_agregar("track_genre", "popularity", "soma")
     assert "erro" in resultado
 
 
-def test_agrupar_e_agregar_coluna_nao_numerica():
-    resultado = agrupar_e_agregar(grupo="genero", coluna="cidade", funcao="mean")
+def test_agrupar_e_agregar_coluna_invalida():
+    resultado = filter_tools.agrupar_e_agregar("track_genre", "coluna_xyz", "mean")
     assert "erro" in resultado
 
 
-# ============================================================
-# Testes de stats_tools
-# ============================================================
+# ========================================================
+# Testes: stats_tools
+# ========================================================
 
-def test_correlacao_idade_salario():
-    # Idade e salário são fortemente correlacionados nesse dataset
-    resultado = correlacao("idade", "salario")
-    assert "correlacao" in resultado
-    assert resultado["correlacao"] > 0.8  # esperamos forte positiva
+def test_correlacao_valida():
+    resultado = stats_tools.correlacao("energy", "danceability")
+    assert "pearson" in resultado
+    assert "spearman" in resultado
+    assert resultado["pearson"] == 0.1343
 
 
-def test_correlacao_coluna_categorica_retorna_erro():
-    resultado = correlacao("idade", "genero")
+def test_correlacao_coluna_invalida():
+    resultado = stats_tools.correlacao("energy", "coluna_xyz")
     assert "erro" in resultado
 
 
-def test_detectar_outliers_iqr_identifica_o_100():
-    resultado = detectar_outliers("idade", metodo="iqr")
-    assert resultado["total_outliers"] >= 1
-    assert 100.0 in resultado["exemplos"]
+def test_correlacao_coluna_nao_numerica():
+    resultado = stats_tools.correlacao("track_name", "popularity")
+    assert "erro" in resultado
 
 
-def test_detectar_outliers_metodo_invalido():
-    resultado = detectar_outliers("idade", metodo="foo")
+def test_detectar_outliers_valido():
+    resultado = stats_tools.detectar_outliers("popularity")
+    assert "iqr" in resultado
+    assert "zscore" in resultado
+    assert resultado["iqr"]["total_outliers"] > 0
+
+
+def test_detectar_outliers_coluna_invalida():
+    resultado = stats_tools.detectar_outliers("coluna_xyz")
+    assert "erro" in resultado
+
+
+def test_detectar_outliers_coluna_nao_numerica():
+    resultado = stats_tools.detectar_outliers("track_name")
     assert "erro" in resultado

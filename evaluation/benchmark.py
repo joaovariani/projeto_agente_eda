@@ -1,171 +1,125 @@
 """
-Executor do benchmark.
+Executor do benchmark de avaliação do agente.
 
-Lê o arquivo benchmark.json, roda cada pergunta no agente, compara com o
-gabarito e produz um relatório agregado em logs/.
-
-Executar com:
+Uso:
     python -m evaluation.benchmark
 """
 
 import json
+import time
 from datetime import datetime
-from pathlib import Path
-from collections import defaultdict
 
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
-
+import config
 from agent import Agent
 from tools import state
-from config import BENCHMARK_FILE, DATASET_PATH, LOGS_DIR
-from .metrics import avaliar_resposta, BenchmarkSummary
+from .metrics import calcular_acuracia, calcular_custo_usd, gerar_relatorio
 
 
-console = Console()
+def executar_benchmark(verbose: bool = True) -> dict:
+    """
+    Executa todas as perguntas do benchmark e retorna o relatório completo.
+    """
+    # Carrega o benchmark
+    with open(config.BENCHMARK_FILE, "r", encoding="utf-8") as f:
+        benchmark = json.load(f)
 
+    perguntas = benchmark["perguntas"]
+    total = len(perguntas)
 
-def carregar_benchmark(caminho: Path = BENCHMARK_FILE) -> list[dict]:
-    """Lê o JSON do benchmark e retorna a lista de perguntas."""
-    with open(caminho, "r", encoding="utf-8") as f:
-        dados = json.load(f)
-    return dados.get("perguntas", [])
+    if verbose:
+        print("=" * 60)
+        print("  Executando Benchmark do Agente EDA")
+        print(f"  Dataset: {config.DATASET_PATH.name}")
+        print(f"  Total de perguntas: {total}")
+        print("=" * 60)
 
+    # Carrega o dataset
+    resultado_carga = state.load(config.DATASET_PATH)
+    if "erro" in resultado_carga:
+        print(f"Erro ao carregar dataset: {resultado_carga['erro']}")
+        return {}
 
-def rodar_benchmark():
-    # ============ 1. Carregar dataset ============
-    if not Path(DATASET_PATH).exists():
-        console.print(f"[red]Dataset não encontrado: {DATASET_PATH}[/red]")
-        console.print("Ajuste DATASET_PATH em config.py.")
-        return
+    agente = Agent()
+    resultados = []
 
-    state.load(str(DATASET_PATH))
-    console.print(
-        f"[green]✓[/green] Dataset: {DATASET_PATH.name} "
-        f"({len(state.df)} linhas × {len(state.df.columns)} colunas)"
-    )
+    for i, item in enumerate(perguntas, 1):
+        if verbose:
+            print(f"\n[{i}/{total}] {item['pergunta']}")
 
-    # ============ 2. Carregar perguntas ============
-    perguntas = carregar_benchmark()
-    if not perguntas:
-        console.print("[red]Benchmark vazio![/red]")
-        return
+        agente.resetar()
 
-    console.print(f"[green]✓[/green] Benchmark carregado: {len(perguntas)} perguntas\n")
+        erro = False
+        try:
+            resultado = agente.perguntar(item["pergunta"])
+            resposta = resultado["resposta"]
+            tool_calls = resultado["tool_calls"]
+            latencia = resultado["latencia_segundos"]
+            tokens = resultado.get("tokens", {})
+        except Exception as e:
+            resposta = f"ERRO: {e}"
+            tool_calls = 0
+            latencia = 0
+            tokens = {}
+            erro = True
 
-    # ============ 3. Inicializar agente ============
-    try:
-        agente = Agent()
-    except RuntimeError as e:
-        console.print(f"[red]Erro:[/red] {e}")
-        return
+        correto = calcular_acuracia(resposta, item["resposta_referencia"])
+        custo = calcular_custo_usd(
+            tokens.get("input", 0),
+            tokens.get("output", 0),
+        )
 
-    # ============ 4. Rodar cada pergunta ============
-    resultados_brutos: list[dict] = []
+        resultado_item = {
+            "id": item["id"],
+            "tipo": item["tipo"],
+            "pergunta": item["pergunta"],
+            "resposta_referencia": item["resposta_referencia"],
+            "resposta_agente": resposta,
+            "correto": correto,
+            "erro": erro,
+            "tool_calls": tool_calls,
+            "latencia_segundos": latencia,
+            "tokens": tokens,
+            "custo_usd": custo,
+        }
+        resultados.append(resultado_item)
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("{task.completed}/{task.total}"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Avaliando", total=len(perguntas))
+        if verbose:
+            status = "✓" if correto else "✗"
+            print(f"  {status} | {latencia}s | {tool_calls} tools | ${custo}")
 
-        for p in perguntas:
-            progress.update(task, description=f"[{p['id']}] {p['pergunta'][:50]}...")
+        # Pausa pequena para não sobrecarregar a API
+        time.sleep(1)
 
-            resultado = agente.perguntar(p["pergunta"])
+    # Gera relatório
+    relatorio = gerar_relatorio(resultados)
 
-            # Avalia se a resposta está correta
-            correto = False
-            if resultado.sucesso and p.get("resposta_esperada") is not None:
-                try:
-                    correto = avaliar_resposta(
-                        resultado.resposta_final,
-                        p["resposta_esperada"],
-                        p["tipo_resposta"],
-                    )
-                except Exception as e:
-                    console.print(f"[yellow]Falha na avaliação de {p['id']}: {e}[/yellow]")
-
-            resultados_brutos.append({
-                "id": p["id"],
-                "tipo": p["tipo"],
-                "pergunta": p["pergunta"],
-                "resposta_esperada": p.get("resposta_esperada"),
-                "resposta_obtida": resultado.resposta_final,
-                "correto": correto,
-                "execucao_sucesso": resultado.sucesso,
-                "tool_calls": resultado.total_tool_calls,
-                "iteracoes": resultado.total_iteracoes,
-                "input_tokens": resultado.input_tokens,
-                "output_tokens": resultado.output_tokens,
-                "latencia_seg": resultado.latencia_total,
-                "trajetoria": [
-                    {"tipo": s.tipo, "conteudo": s.conteudo}
-                    for s in resultado.trajetoria
-                ],
-            })
-
-            progress.advance(task)
-
-    # ============ 5. Agregar métricas ============
-    total = len(resultados_brutos)
-    acertos = sum(1 for r in resultados_brutos if r["correto"])
-    execucoes_ok = sum(1 for r in resultados_brutos if r["execucao_sucesso"])
-
-    # Acurácia por tipo
-    por_tipo_correto = defaultdict(int)
-    por_tipo_total = defaultdict(int)
-    for r in resultados_brutos:
-        por_tipo_total[r["tipo"]] += 1
-        if r["correto"]:
-            por_tipo_correto[r["tipo"]] += 1
-
-    acc_por_tipo = {
-        tipo: por_tipo_correto[tipo] / por_tipo_total[tipo]
-        for tipo in por_tipo_total
+    saida = {
+        "timestamp": datetime.now().isoformat(),
+        "dataset": str(config.DATASET_PATH),
+        "modelo": config.LLM_MODEL,
+        "relatorio": relatorio,
+        "resultados": resultados,
     }
 
-    resumo = BenchmarkSummary(
-        total_perguntas=total,
-        acertos=acertos,
-        taxa_execucao_sucesso=execucoes_ok / total,
-        acuracia_geral=acertos / total,
-        acuracia_por_tipo=acc_por_tipo,
-        tool_calls_media=sum(r["tool_calls"] for r in resultados_brutos) / total,
-        latencia_media=sum(r["latencia_seg"] for r in resultados_brutos) / total,
-        input_tokens_total=sum(r["input_tokens"] for r in resultados_brutos),
-        output_tokens_total=sum(r["output_tokens"] for r in resultados_brutos),
-    )
+    # Salva o log
+    caminho_log = config.LOGS_DIR / f"benchmark_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    with open(caminho_log, "w", encoding="utf-8") as f:
+        json.dump(saida, f, ensure_ascii=False, indent=2, default=str)
 
-    resumo.imprimir()
+    if verbose:
+        print("\n" + "=" * 60)
+        print("  RESULTADO FINAL")
+        print("=" * 60)
+        print(f"  Acurácia geral:        {relatorio['acuracia_geral']}%")
+        print(f"  Taxa de execução:      {relatorio['taxa_execucao_sucesso']}%")
+        print(f"  Média tool calls:      {relatorio['media_tool_calls']}")
+        print(f"  Latência média:        {relatorio['latencia_media_segundos']}s")
+        print(f"  Custo total:           ${relatorio['custo_total_usd']}")
+        print(f"\n  Log salvo em: {caminho_log}")
+        print("=" * 60)
 
-    # ============ 6. Salvar log completo ============
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = LOGS_DIR / f"benchmark_{ts}.json"
-    log_data = {
-        "timestamp": ts,
-        "dataset": str(DATASET_PATH),
-        "resumo": {
-            "total_perguntas": resumo.total_perguntas,
-            "acertos": resumo.acertos,
-            "acuracia_geral": resumo.acuracia_geral,
-            "taxa_execucao_sucesso": resumo.taxa_execucao_sucesso,
-            "acuracia_por_tipo": resumo.acuracia_por_tipo,
-            "tool_calls_media": resumo.tool_calls_media,
-            "latencia_media": resumo.latencia_media,
-            "input_tokens_total": resumo.input_tokens_total,
-            "output_tokens_total": resumo.output_tokens_total,
-        },
-        "resultados": resultados_brutos,
-    }
-    with open(log_path, "w", encoding="utf-8") as f:
-        json.dump(log_data, f, ensure_ascii=False, indent=2, default=str)
-
-    console.print(f"\n[green]✓[/green] Log completo salvo em [bold]{log_path}[/bold]")
+    return saida
 
 
 if __name__ == "__main__":
-    rodar_benchmark()
+    executar_benchmark()

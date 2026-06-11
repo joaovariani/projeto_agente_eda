@@ -41,6 +41,184 @@
             "resposta_esperada": "recusa",
             "tipo_resposta": "categorica",
             "observacao": "Esperamos que o agente recuse ou peça esclarecimento. A comparação verifica se a resposta contém palavras como 'ambígua', 'não entendi', 'esclarecer', etc."
+        },
+        {
+            "id": "q-006",
+            "tipo": "factual",
+            "pergunta": "Qual o valor máximo de popularidade no dataset?",
+            "resposta_esperada": "100",
+            "tipo_resposta": "numero_inteiro"
+        },
+        {
+            "id": "q-007",
+            "tipo": "factual",
+            "pergunta": "Quantas músicas explícitas existem no dataset?",
+            "resposta_esperada": "9747",
+            "tipo_resposta": "numero_inteiro"
+        },
+        {
+            "id": "q-008",
+            "tipo": "factual",
+            "pergunta": "Qual o gênero musical mais frequente no dataset?",
+            "resposta_esperada": "acoustic",
+            "tipo_resposta": "string"
+        },
+        {
+            "id": "q-009",
+            "tipo": "factual",
+            "pergunta": "Qual a duração média das músicas em milissegundos?",
+            "resposta_esperada": "228029.1531",
+            "tipo_resposta": "numero_float"
+        },
+        {
+            "id": "q-010",
+            "tipo": "factual",
+            "pergunta": "Qual o artista que mais aparece no dataset?",
+            "resposta_esperada": "The Beatles",
+            "tipo_resposta": "string"
+        },
+        {
+            "id": "q-011",
+            "tipo": "analitica",
+            "pergunta": "Qual o gênero musical com maior popularidade média?",
+            "resposta_esperada": "pop-film",
+            "tipo_resposta": "string"
+        },
+        {
+            "id": "q-012",
+            "tipo": "analitica",
+            "pergunta": "Qual a correlação entre energy e danceability?",
+            "resposta_esperada": "0.1343",
+            "tipo_resposta": "numero_float"
+        },
+        {
+            "id": "q-013",
+            "tipo": "analitica",
+            "pergunta": "Qual a correlação entre loudness e energy?",
+            "resposta_esperada": "0.7617",
+            "tipo_resposta": "numero_float"
+        },
+        {
+            "id": "q-014",
+            "tipo": "analitica",
+            "pergunta": "Qual o gênero musical com menor popularidade média?",
+            "resposta_esperada": "iranian",
+            "tipo_resposta": "string"
+        },
+        {
+            "id": "q-015",
+            "tipo": "analitica",
+            "pergunta": "Qual a média de danceability de todas as músicas?",
+            "resposta_esperada": "0.5668",
+            "tipo_resposta": "numero_float"
+        },
+        {
+            "id": "q-016",
+            "tipo": "analitica",
+            "pergunta": "Quantas músicas têm popularidade igual a zero?",
+            "resposta_esperada": "16020",
+            "tipo_resposta": "numero_inteiro"
+        },
+        {
+            "id": "q-017",
+            "tipo": "analitica",
+            "pergunta": "Qual o desvio padrão da popularidade?",
+            "resposta_esperada": "22.3051",
+            "tipo_resposta": "numero_float"
+        },
+        {
+            "id": "q-018",
+            "tipo": "analitica",
+            "pergunta": "Qual o tempo máximo em BPM no dataset?",
+            "resposta_esperada": "243.372",
+            "tipo_resposta": "numero_float"
+        },
+        {
+            "id": "q-019",
+            "tipo": "analitica",
+            "pergunta": "Qual a média de valence das músicas?",
+            "resposta_esperada": "0.4741",
+            "tipo_resposta": "numero_float"
+        },
+        {
+            "id": "q-020",
+            "tipo": "analitica",
+            "pergunta": "Qual a correlação entre valence e danceability?",
+            "resposta_esperada": "0.4773",
+            "tipo_resposta": "numero_float"
+        },
+        {
+            "id": "q-021",
+            "tipo": "analitica",
+            "pergunta": "Quantos álbuns únicos existem no dataset?",
+            "resposta_esperada": "46589",
+            "tipo_resposta": "numero_inteiro"
+        },
+        {
+            "id": "q-022",
+            "tipo": "analitica",
+            "pergunta": "Qual a média de loudness das músicas?",
+            "resposta_esperada": "-8.259",
+            "tipo_resposta": "numero_float"
+        },
+        {
+            "id": "q-023",
+            "tipo": "analitica",
+            "pergunta": "Qual o gênero musical com maior média de energy?",
+            "resposta_esperada": "death-metal",
+            "tipo_resposta": "string"
+        },
+        {
+            "id": "q-024",
+            "tipo": "analitica",
+            "pergunta": "Qual a média de acousticness das músicas?",
+            "resposta_esperada": "0.3149",
+            "tipo_resposta": "numero_float"
+        },
+        {
+            "id": "q-025",
+            "tipo": "analitica",
+            "pergunta": "Qual a popularidade média das músicas do gênero pop-film?",
+            "resposta_esperada": "59.283",
+            "tipo_resposta": "numero_float"
+        },
+        {
+            "id": "q-026",
+            "tipo": "analitica",
+            "pergunta": "Quantas músicas explícitas existem no gênero pop?",
+            "resposta_esperada": "74",
+            "tipo_resposta": "numero_inteiro"
+        },
+        {
+            "id": "q-027",
+            "tipo": "analitica",
+            "pergunta": "Qual a música mais popular do dataset e quem é o artista?",
+            "resposta_esperada": "Unholy (feat. Kim Petras) - Sam Smith;Kim Petras",
+            "tipo_resposta": "string"
+        },
+        {
+            "id": "q-028",
+            "tipo": "ambigua",
+            "pergunta": "Qual a melhor música do dataset?",
+            "resposta_esperada": "recusa",
+            "tipo_resposta": "categorica",
+            "observacao": "AMBIGUA: o agente deve informar que 'melhor' é subjetivo e pedir esclarecimento ou usar popularidade como critério."
+        },
+        {
+            "id": "q-029",
+            "tipo": "ambigua",
+            "pergunta": "Me fala sobre a coluna xyz",
+            "resposta_esperada": "recusa",
+            "tipo_resposta": "categorica",
+            "observacao": "INVALIDA: o agente deve informar que a coluna 'xyz' não existe e listar as colunas disponíveis."
+        },
+        {
+            "id": "q-030",
+            "tipo": "ambigua",
+            "pergunta": "Qual o valor de felicidade das músicas?",
+            "resposta_esperada": "recusa",
+            "tipo_resposta": "categorica",
+            "observacao": "AMBIGUA: o agente deve reconhecer que não existe coluna 'felicidade' e sugerir a coluna 'valence' como proxy."
         }
     ]
 }

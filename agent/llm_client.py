@@ -1,107 +1,40 @@
 """
-Cliente da API do LLM.
+Cliente da API do Claude (Anthropic).
 
-Encapsula a chamada à API para que o resto do código não precise
-saber qual provedor está sendo usado. Se quiserem trocar de provedor,
-mexem APENAS aqui.
-
-Este arquivo já vem implementado para a API da Anthropic.
-Para usar outros provedores, criem variantes (LLMClientOpenAI etc).
+Responsável por enviar mensagens e tools para o LLM
+e retornar a resposta bruta para o loop do agente.
 """
 
-from __future__ import annotations
-from dataclasses import dataclass
-import time
-
-from anthropic import Anthropic
-
-from config import (
-    ANTHROPIC_API_KEY,
-    LLM_MODEL,
-    MAX_TOKENS_PER_RESPONSE,
-)
+import anthropic
+import config
 
 
-# ============================================================
-# Estruturas de retorno
-# ============================================================
-
-@dataclass
-class LLMResponse:
-    """Resposta tipada do LLM, independente do provedor."""
-    text: str                          # Texto livre gerado (pode ser vazio)
-    tool_calls: list[dict]             # Lista de chamadas de tool (pode ser vazia)
-    raw_response: object               # Resposta crua do SDK (para debug)
-    input_tokens: int                  # Tokens enviados
-    output_tokens: int                 # Tokens gerados
-    stop_reason: str                   # 'end_turn', 'tool_use', etc.
-    latency_seconds: float             # Tempo da chamada
+_client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
 
-# ============================================================
-# Cliente Anthropic
-# ============================================================
+def chamar_llm(mensagens: list[dict], tools: list[dict]) -> object:
+    """
+    Envia o histórico de mensagens e as tools disponíveis para o Claude.
 
-class LLMClient:
-    """Cliente que se comunica com a API da Anthropic (Claude)."""
+    Args:
+        mensagens: lista de dicts com 'role' e 'content'
+        tools: lista de tools no formato Anthropic
 
-    def __init__(self, model: str = LLM_MODEL, api_key: str = ANTHROPIC_API_KEY):
-        if not api_key:
-            raise RuntimeError(
-                "ANTHROPIC_API_KEY não definida. Configure no arquivo .env."
-            )
-        self.client = Anthropic(api_key=api_key)
-        self.model = model
-
-    def chat(
-        self,
-        messages: list[dict],
-        tools: list[dict],
-        system: str = "",
-    ) -> LLMResponse:
-        """
-        Envia uma rodada de mensagens ao LLM.
-
-        Args:
-            messages: histórico no formato Anthropic.
-            tools: lista de tools disponíveis (formato Anthropic).
-            system: prompt de sistema (instruções gerais do agente).
-
-        Returns:
-            LLMResponse com texto, chamadas de tool e métricas.
-        """
-        kwargs = {
-            "model": self.model,
-            "max_tokens": MAX_TOKENS_PER_RESPONSE,
-            "messages": messages,
-            "tools": tools,
-        }
-        if system:
-            kwargs["system"] = system
-
-        inicio = time.perf_counter()
-        resp = self.client.messages.create(**kwargs)
-        latencia = time.perf_counter() - inicio
-
-        # Extrai blocos de texto e de tool_use da resposta
-        texto = ""
-        tool_calls = []
-        for bloco in resp.content:
-            if bloco.type == "text":
-                texto += bloco.text
-            elif bloco.type == "tool_use":
-                tool_calls.append({
-                    "id": bloco.id,
-                    "name": bloco.name,
-                    "input": bloco.input,
-                })
-
-        return LLMResponse(
-            text=texto,
-            tool_calls=tool_calls,
-            raw_response=resp,
-            input_tokens=resp.usage.input_tokens,
-            output_tokens=resp.usage.output_tokens,
-            stop_reason=resp.stop_reason,
-            latency_seconds=latencia,
-        )
+    Returns:
+        Objeto de resposta da API do Claude
+    """
+    response = _client.messages.create(
+        model=config.LLM_MODEL,
+        max_tokens=config.MAX_TOKENS_PER_RESPONSE,
+        system=(
+            "Você é um agente especialista em análise exploratória de dados. "
+            "Responda sempre em português brasileiro. "
+            "Você tem acesso a ferramentas Python para analisar um dataset CSV carregado em memória. "
+            "Sempre que precisar de informações sobre os dados, use as ferramentas disponíveis. "
+            "Nunca invente dados ou resultados — sempre execute as ferramentas para obter os valores reais. "
+            "Ao final, apresente a resposta de forma clara e objetiva para o usuário."
+        ),
+        messages=mensagens,
+        tools=tools,
+    )
+    return response

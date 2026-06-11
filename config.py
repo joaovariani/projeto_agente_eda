@@ -29,7 +29,7 @@ for d in [DATA_DIR, OUTPUTS_DIR, LOGS_DIR]:
 # DATASET
 # ============================================================
 # TODO: alterar para o arquivo CSV do seu grupo.
-DATASET_PATH = DATA_DIR / "exemplo.csv"
+DATASET_PATH = DATA_DIR / "spotify.csv"
 
 # ============================================================
 # LLM

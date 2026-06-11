@@ -1,119 +1,93 @@
 """
-Infraestrutura comum das ferramentas (tools).
+Base comum para todas as ferramentas do agente.
 
-Define:
-  - Estado compartilhado (o DataFrame em memória)
-  - Decorador @tool que registra funções como ferramentas do agente
-  - Estruturas para descrever cada tool ao LLM
+Define o decorador @tool e o objeto de estado global (state)
+que carrega e mantém o DataFrame em memória.
 """
 
-from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Callable, Any
-import inspect
 import pandas as pd
+from pathlib import Path
 
 
-# ============================================================
-# Estado compartilhado
-# ============================================================
+# ========================================================
+# Registro global de tools
+# ========================================================
 
-class DataState:
-    """
-    Mantém o DataFrame atual em memória.
-    Todas as tools acessam o mesmo objeto, evitando recarregar o CSV
-    a cada chamada.
-    """
-    def __init__(self) -> None:
-        self.df: pd.DataFrame | None = None
-        self.path: str | None = None
-
-    def load(self, path: str) -> None:
-        """Carrega um CSV no estado."""
-        self.df = pd.read_csv(path)
-        self.path = path
-
-    def require_loaded(self) -> pd.DataFrame:
-        """Retorna o DataFrame ou levanta erro se nada foi carregado."""
-        if self.df is None:
-            raise RuntimeError(
-                "Nenhum dataset carregado. Carregue um CSV antes de chamar as tools."
-            )
-        return self.df
+_registry: list[dict] = []
+_functions: dict[str, callable] = {}
 
 
-# Instância global - usada por todas as tools
-state = DataState()
-
-
-# ============================================================
-# Registro de tools
-# ============================================================
-
-@dataclass
-class ToolSpec:
-    """Descrição de uma tool para ser passada ao LLM."""
-    name: str
-    description: str
-    parameters: dict[str, Any]   # JSON Schema dos parâmetros
-    function: Callable           # A função Python que executa de fato
-
-
-# Lista global de todas as tools registradas
-TOOL_REGISTRY: list[ToolSpec] = []
-
-
-def tool(description: str, parameters: dict[str, Any]):
+def tool(description: str, parameters: dict):
     """
     Decorador que registra uma função como tool disponível para o agente.
-
-    Uso:
-        @tool(
-            description="Retorna a lista de colunas e seus tipos.",
-            parameters={
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        )
-        def listar_colunas() -> dict:
-            ...
-
-    O `description` é lido pelo LLM para decidir QUANDO chamar a tool.
-    O `parameters` segue o padrão JSON Schema usado por function calling.
+    Armazena a descrição e os parâmetros no formato da API Anthropic.
     """
-    def decorator(func: Callable):
-        spec = ToolSpec(
-            name=func.__name__,
-            description=description,
-            parameters=parameters,
-            function=func,
-        )
-        TOOL_REGISTRY.append(spec)
+    def decorator(func):
+        _registry.append({
+            "name": func.__name__,
+            "description": description,
+            "input_schema": parameters,
+        })
+        _functions[func.__name__] = func
         return func
     return decorator
 
 
-def get_tool_by_name(name: str) -> ToolSpec | None:
-    """Busca uma tool pelo nome (usado pelo orquestrador)."""
-    for spec in TOOL_REGISTRY:
-        if spec.name == name:
-            return spec
-    return None
+def get_tools() -> list[dict]:
+    """Retorna a lista de tools no formato esperado pela API do Claude."""
+    return _registry
 
 
-def all_tools_for_llm() -> list[dict]:
-    """
-    Retorna a lista de tools no formato que a API da Anthropic espera.
+def call_tool(name: str, arguments: dict):
+    """Executa uma tool pelo nome com os argumentos fornecidos pelo LLM."""
+    if name not in _functions:
+        return {"erro": f"Tool '{name}' não encontrada."}
+    try:
+        return _functions[name](**arguments)
+    except TypeError as e:
+        return {"erro": f"Argumentos inválidos para '{name}': {e}"}
+    except Exception as e:
+        return {"erro": f"Erro ao executar '{name}': {e}"}
 
-    Outros provedores (OpenAI, Google) têm formatos parecidos mas com
-    diferenças sutis — adapte no llm_client.py se trocar de provedor.
-    """
-    return [
-        {
-            "name": t.name,
-            "description": t.description,
-            "input_schema": t.parameters,
-        }
-        for t in TOOL_REGISTRY
-    ]
+
+# ========================================================
+# Estado global — DataFrame carregado
+# ========================================================
+
+class _State:
+    def __init__(self):
+        self._df: pd.DataFrame | None = None
+        self._path: str = ""
+
+    def load(self, path: str | Path) -> dict:
+        """Carrega um CSV no estado global."""
+        try:
+            self._df = pd.read_csv(path)
+            self._path = str(path)
+            return {
+                "mensagem": f"Dataset carregado: {self._path}",
+                "linhas": len(self._df),
+                "colunas": len(self._df.columns),
+            }
+        except Exception as e:
+            return {"erro": f"Não foi possível carregar o arquivo: {e}"}
+
+    def require_loaded(self) -> pd.DataFrame:
+        """Retorna o DataFrame ou lança erro se não estiver carregado."""
+        if self._df is None:
+            raise RuntimeError(
+                "Nenhum dataset carregado. "
+                "Carregue um CSV antes de usar as tools."
+            )
+        return self._df
+
+    @property
+    def is_loaded(self) -> bool:
+        return self._df is not None
+
+    @property
+    def path(self) -> str:
+        return self._path
+
+
+state = _State()
